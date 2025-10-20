@@ -89,7 +89,7 @@ class Medium:
     def end_transmission(self, current_time):
 
         self.current_node = None
-        self.busy_until = current_time
+        self.busy_until = 0.0
 
 
 
@@ -112,6 +112,7 @@ class Node:
 
         pid = len(self.sim.generated_packets) + 1
         packet = Packet(pid, self.id, "Server", self.packet_length, self.sim.time)
+
         self.queue.append(packet)
         self.sim.generated_packets.append(packet)
         self.sim.active_packets.append(packet) 
@@ -130,6 +131,9 @@ class Node:
     def handle_collision(self):
 
         if self.retries > 16:
+
+            print(f"\nNode {self.id}: Packet {self.queue[0].pid} dropped after 16 retries.\n")
+
             # pakiet uznany za utracony
             self.sim.active_packets.remove(self.queue[0])
             self.queue.pop(0)
@@ -141,12 +145,12 @@ class Node:
 
         self.retries += 1
         self.sim.stats.record_retry()
-
-        delay_slots = random.randint(0, 2**self.retries - 1)
+        #idk czy randint od 0
+        delay_slots = random.randint(1, 2**self.retries - 1)
         self.backOff = self.sim.time + delay_slots * self.sim.slot_time
 
 # -------------------------------
-# 5. Simulator
+# 5. Event
 # -------------------------------
 class Event:
     def __init__(self, time, type, node):
@@ -166,56 +170,108 @@ class Simulator:
 
         self.time = 0
         self.slot_time = 512 / (bandwidth_mbps * 1e6)
+
         self.nodes = [Node(i, self) for i in range(num_nodes)]
         self.medium = Medium(bandwidth_mbps)
         self.stats = Stats()
+
         self.generated_packets = []
         self.active_packets = []
+
         self.total_data_bytes = total_data_bytes
         self.events = []  
 
-    def handle_event(self, event):
+    def handle_event(self, events):
 
-        if event.type == "try_transmission":
-            
-            if self.medium.is_free(self.time):
+        try_events = [e for e in events if e.type == "try_transmission"]
 
-                new_event = Event(time=self.time, type="start_transmission", node=event.node)
-                
-                self.events.append(new_event)
-                self.events.sort(key=lambda e: e.time)
-            else:
-                # medium zajęte, ponów próbę po czasie slot_time
-                new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+        if len(try_events) > 1:
 
-        elif event.type == "start_transmission":
+            if self.medium.is_free(self.time): 
 
-            if not self.medium.is_free(self.time):
+                print(f"Kolizja o czasie {self.time} między węzłami {[event.node.id for event in events]}")
 
+                # kolizja
                 self.stats.record_collision()
-                event.node.handle_collision()
-                new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
-                self.events.append(new_event)
-                self.events.sort(key=lambda e: e.time)
+
+                for event in try_events:
+                    
+                    event.node.handle_collision()
+
+                    print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
+                    new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                    self.events.append(new_event)
+
 
             else:
+                #medium zajęte, ponów próbę po czasie slot_time
+                print(f"Medium zajęte o czasie {self.time}, ponawianie prób węzłów {[event.node.id for event in try_events]}")
+                for event in try_events:
+
+                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+
+                    self.events.append(new_event)
+                    self.events.sort(key=lambda e: e.time)
+
+            self.events.sort(key=lambda e: e.time)
+
+        else:
+
+            event = events[0]
+
+            if event.type == "try_transmission":
+
+                print(f"Node {event.node.id} próbuje nadać o czasie {self.time}")
                 
-                duration = self.medium.start_transmission(self.time, 1500, node=event.node)
+                if self.medium.is_free(self.time):
 
-                new_event = Event(time=self.time + duration, type="end_transmission", node=event.node)
-                self.events.append(new_event)
-                self.events.sort(key=lambda e: e.time)
+                    new_event = Event(time=self.time, type="start_transmission", node=event.node)
+                    
+                    self.events.append(new_event)
+                    self.events.sort(key=lambda e: e.time)
 
-        elif event.type == "end_transmission":
+                else:
+                    # medium zajęte, ponów próbę po czasie slot_time
+                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
 
-            event.node.queue.pop(0)
-            self.medium.end_transmission(self.time)
+                    self.events.append(new_event)
+                    self.events.sort(key=lambda e: e.time)
 
-            if event.node.queue:
+            elif event.type == "start_transmission":
 
-                new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
-                self.events.append(new_event)
-                self.events.sort(key=lambda e: e.time)
+                print(f"Node {event.node.id} zaczyna nadawać o czasie {self.time}")
+
+                if not self.medium.is_free(self.time):
+
+                    self.stats.record_collision()
+                    event.node.handle_collision()
+                    new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                    self.events.append(new_event)
+                    self.events.sort(key=lambda e: e.time)
+
+                else:
+                    
+                    duration = self.medium.start_transmission(self.time, 1500, node=event.node)
+
+                    new_event = Event(time=self.time + duration, type="end_transmission", node=event.node)
+                    self.events.append(new_event)
+                    self.events.sort(key=lambda e: e.time)
+
+            elif event.type == "end_transmission":
+
+                print(f"Node {event.node.id} kończy nadawać o czasie {self.time}")
+
+                self.nodes[event.node.id].queue.pop(0)
+
+                self.medium.end_transmission(self.time)
+
+                if event.node.queue:
+
+                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+                    self.events.append(new_event)
+                    self.events.sort(key=lambda e: e.time)
+
+
 
     def run(self):
 
@@ -223,10 +279,12 @@ class Simulator:
 
             # każdy węzeł ma tę samą ilość danych do przesłania
             packets_per_node = int(self.total_data_bytes / 1500)
-            n.backOff = random.randint(0, 10) * self.slot_time
+            #n.backOff = random.randint(0, 10) * self.slot_time
 
             for _ in range(packets_per_node):
                 n.generate_packet()
+                
+            print(f"Węzeł {n.id} wygenerował {len(n.queue)} pakietów.")
 
             new_event = Event(time=n.backOff, type="try_transmission", node=n)
             self.events.append(new_event)
@@ -238,13 +296,39 @@ class Simulator:
 
             print(len(self.events))
 
-            event = self.events.pop(0)           # pobierz najbliższe zdarzenie
-            self.time = event.time            # przeskocz czas do tego momentu
-            self.handle_event(event) 
+            self.time = self.events[0].time            # przeskocz czas do tego momentu
+
+            events = [event for event in self.events if event.time == self.time]
+
+            print(f"\nCzas symulacji: {self.time}, Obsługiwane id węzłów: {[event.node.id for event in events]}")
+
+            for event in events:
+                self.events.remove(event)
+
+            self.handle_event(events) 
 
 
         return self.stats.summary(self.time)
     
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
