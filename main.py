@@ -1,7 +1,7 @@
 import classes as cl
 
 print("\nRozpoczynam Symulacje:")
-sim = cl.Simulator(num_nodes=10, bandwidth_mbps=100, total_data_bytes=1e6)
+sim = cl.Simulator(num_nodes=2, bandwidth_mbps=100, total_data_bytes=1e7)
 
 results = sim.run()
 print("\nEthernet Simulation Results (100 Mb/s, 1 GB total):")
