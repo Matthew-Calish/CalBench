@@ -59,9 +59,8 @@ class Stats:
         return {
             "Simulation Time": total_time_s,
             "Throughput [Mb/s]": round(throughput_mbps, 3),
-            "Avg latency [ms]": round(avg_latency, 3),
+            "Avg latency [s]": round(avg_latency, 3),
             "Collisions": self.collision_events,
-            "Retries avg": round(avg_retries, 2),
             "Dropped": self.packets_dropped,
         }
 
@@ -80,14 +79,17 @@ class Medium:
         return current_time >= self.busy_until
 
     def start_transmission(self, current_time, packet_size_bytes, node=None):
+
         transmission_time = (packet_size_bytes * 8) / self.bandwidth_bps
         self.busy_until = current_time + transmission_time
         self.current_node = node
+
         return transmission_time
     
-    def end_transmission(self):
+    def end_transmission(self, current_time):
+
         self.current_node = None
-        self.busy_until = 0.0
+        self.busy_until = current_time
 
 
 
@@ -104,11 +106,12 @@ class Node:
         self.retries = 0
         self.backOff = 0
         self.queue = []
+        self.packet_length = 1500
 
-    def generate_packet(self, size_bytes=1500):
+    def generate_packet(self):
 
         pid = len(self.sim.generated_packets) + 1
-        packet = Packet(pid, self.id, "Server", size_bytes, self.sim.time)
+        packet = Packet(pid, self.id, "Server", self.packet_length, self.sim.time)
         self.queue.append(packet)
         self.sim.generated_packets.append(packet)
         self.sim.active_packets.append(packet) 
@@ -118,17 +121,9 @@ class Node:
         if not self.queue:
             return
         
-
         packet = self.queue[0]
-        ##self.sim.active_packets.remove(packet)
-
-        ##self.retries = 0
-        ##self.queue.pop(0)
-
-        #success = self.sim.medium.start_transmission(self)
         packet.sent_time = self.sim.time
 
-        #self.sim.stats.record_sent(packet)
         return packet
 
 
@@ -138,9 +133,10 @@ class Node:
             # pakiet uznany za utracony
             self.sim.active_packets.remove(self.queue[0])
             self.queue.pop(0)
-            
+            self.retries = 0
             self.backOff = 0
             self.sim.stats.record_drop()
+
             return
 
         self.retries += 1
@@ -149,13 +145,16 @@ class Node:
         delay_slots = random.randint(0, 2**self.retries - 1)
         self.backOff = self.sim.time + delay_slots * self.sim.slot_time
 
+# -------------------------------
+# 5. Simulator
+# -------------------------------
+class Event:
+    def __init__(self, time, type, node):
 
-    def finish_send(self, packet):
-        self.sim.medium.end_transmission(self)
-        self.sim.stats.record_received(packet)
-        self.queue.pop(0)
-        self.retries = 0
-        self.state = "idle"
+        self.time = time
+        self.type = type
+        self.node = node
+
 
 
 # -------------------------------
@@ -173,7 +172,50 @@ class Simulator:
         self.generated_packets = []
         self.active_packets = []
         self.total_data_bytes = total_data_bytes
-        self.events = []  # [(time, func, args)]
+        self.events = []  
+
+    def handle_event(self, event):
+
+        if event.type == "try_transmission":
+            
+            if self.medium.is_free(self.time):
+
+                new_event = Event(time=self.time, type="start_transmission", node=event.node)
+                
+                self.events.append(new_event)
+                self.events.sort(key=lambda e: e.time)
+            else:
+                # medium zajęte, ponów próbę po czasie slot_time
+                new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+
+        elif event.type == "start_transmission":
+
+            if not self.medium.is_free(self.time):
+
+                self.stats.record_collision()
+                event.node.handle_collision()
+                new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                self.events.append(new_event)
+                self.events.sort(key=lambda e: e.time)
+
+            else:
+                
+                duration = self.medium.start_transmission(self.time, 1500, node=event.node)
+
+                new_event = Event(time=self.time + duration, type="end_transmission", node=event.node)
+                self.events.append(new_event)
+                self.events.sort(key=lambda e: e.time)
+
+        elif event.type == "end_transmission":
+
+            event.node.queue.pop(0)
+            self.medium.end_transmission(self.time)
+
+            if event.node.queue:
+
+                new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+                self.events.append(new_event)
+                self.events.sort(key=lambda e: e.time)
 
     def run(self):
 
@@ -186,58 +228,73 @@ class Simulator:
             for _ in range(packets_per_node):
                 n.generate_packet()
 
-        while self.active_packets:  
+            new_event = Event(time=n.backOff, type="try_transmission", node=n)
+            self.events.append(new_event)
             
-            print(len(self.active_packets))
+
+        self.events.sort(key=lambda e: e.time)
+
+        while self.events:  
+
+            print(len(self.events))
+
+            event = self.events.pop(0)           # pobierz najbliższe zdarzenie
+            self.time = event.time            # przeskocz czas do tego momentu
+            self.handle_event(event) 
+
+
+        return self.stats.summary(self.time)
+    
+
+
+
+
+
+
+
+    def old(self):
+        
+        while self.active_packets:
 
             ready_nodes = [n for n in self.nodes if n.backOff <= self.time and n.queue]
 
-            if len(ready_nodes) > 1:
-            # kolizja
+            if self.medium.is_free(self.time):
 
-                for n in ready_nodes:
-                    n.handle_collision()
+                if len(ready_nodes) > 1:
+                # kolizja
 
-                self.medium.busy_until = self.time
-                self.stats.record_collision()
-                self.time += self.slot_time
-                
-                continue
+                    for n in ready_nodes:
+                        n.handle_collision()
 
-            if len(ready_nodes) == 1:
+                    self.medium.busy_until = self.time
+                    self.stats.record_collision()
 
-                node = ready_nodes[0]
+                    self.time += self.slot_time
+                    continue
 
-                if self.medium.is_free(self.time):
+                if len(ready_nodes) == 1:
+
+                    node = ready_nodes[0]
 
                     packet = node.attempt_send()
-                    if packet is None:
-                        # nic do wysłania
-                        self.time += self.slot_time
-                        continue
 
                     tx_time = self.medium.start_transmission(self.time, 1500, node=node)
-                    
+                    self.stats.record_sent(packet)
+
                     self.time += tx_time
 
                     packet.received_time = self.time
-                    self.stats.record_sent(packet)
                     self.stats.record_received(packet)
 
                     # usuń pakiet z queue i active_packets
                     node.queue.pop(0)
-                    try:
-                        self.active_packets.remove(packet)
-                    except ValueError:
-                        pass
+                    self.active_packets.remove(packet)
 
                     # zakończ transmisję medium (ustaw wolne)
-                    self.medium.end_transmission()
+                    self.medium.end_transmission(self.time)
 
                     continue  
 
             self.time += self.slot_time
-
-        return self.stats.summary(self.time / 1000.0)
 
 
