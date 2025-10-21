@@ -58,13 +58,14 @@ class Stats:
         avg_latency = np.mean(self.latencies) if self.latencies else 0
 
         avg_retries = self.total_retries / self.packet_count_sent if self.packet_count_sent else 0
+        print(f"\nIlość odbranych mega bajtów: {self.total_bytes_received/1e6} MB")
 
         return {
-            "Simulation Time": total_time_s,
-            "Throughput [Mb/s]": round(throughput_mbps, 3),
-            "Avg latency [s]": round(avg_latency, 3),
-            "Collisions": self.collision_events,
-            "Dropped": self.packets_dropped,
+            "Czas przesyłu danych [s]:": round(total_time_s, 3),
+            "Przepustowość [Mb/s]:": round(throughput_mbps, 3),
+            "Średnie opuźnienia [s]:": round(avg_latency, 3),
+            "Kolizje:": self.collision_events,
+            "Porzucone pakiety:": self.packets_dropped,
         }
 
 
@@ -188,19 +189,24 @@ class Event:
 # -------------------------------
 class Simulator:
 
-    def __init__(self, num_nodes=5, bandwidth_mbps=100, total_data_bytes=1e6):
+    def __init__(self, num_nodes, bandwidth_mbps, total_data_mega_bytes):
+        print(f"\nInicjalizacja symulatora z {num_nodes} węzłami, przepustowością {bandwidth_mbps} Mb/s, docelową ilością danych {total_data_mega_bytes} MB.\n")
 
         self.time = 0
         self.slot_time = 512 / (bandwidth_mbps * 1e6)
 
+        self.num_nodes = num_nodes
         self.nodes = [Node(i, self) for i in range(num_nodes)]
         self.medium = Medium(bandwidth_mbps)
         self.stats = Stats()
 
+        
         self.generated_packets = []
         self.active_packets = []
 
-        self.total_data_bytes = total_data_bytes
+        self.total_data_bytes = total_data_mega_bytes * 1e6  # konwersja MB na bajty
+        self.bytes_per_node = self.total_data_bytes / self.num_nodes
+        self.packets_per_node = int(self.bytes_per_node / 1500)
         self.events = []  
 
     def handle_event(self, events):
@@ -269,7 +275,7 @@ class Simulator:
                 
                 if self.medium.is_free(self.time):
 
-                    print(f"Node {event.node.id} medium wolne o czasie {self.time}, rozpoczyna nadawanie.")
+                    #print(f"Node {event.node.id} medium wolne o czasie {self.time}, rozpoczyna nadawanie.")
                     new_event = Event(time=self.time, type="start_transmission", node=event.node)
                     
                     self.events.append(new_event)
@@ -302,7 +308,7 @@ class Simulator:
 
                 else:
                     
-                    print(f"\nNode {event.node.id} zaczyna nadawać o czasie {self.time}")
+                    #print(f"\nNode {event.node.id} zaczyna nadawać o czasie {self.time}")
 
                     duration = self.medium.start_transmission(self.time, 1500, node=event.node)
 
@@ -318,10 +324,12 @@ class Simulator:
                 # Jeden węzeł kończy nadawać
                 # -------------------------------
 
-                print(f"Node {event.node.id} kończy nadawać o czasie {self.time}")
+                #print(f"Node {event.node.id} kończy nadawać o czasie {self.time}")
 
                 self.nodes[event.node.id].queue[0].received_time = self.time
                 self.stats.record_received(self.nodes[event.node.id].queue[0])
+                print(f"Ilość odebranych pakietów: {self.stats.packet_count_received} / {len(self.generated_packets)}", end='\r')
+                #print(f"Ilosc odebranych mega bajtów: {self.stats.total_bytes_received/1e6} MB", end='\r')
 
                 self.nodes[event.node.id].retries = 0
                 self.nodes[event.node.id].queue.pop(0)
@@ -339,13 +347,15 @@ class Simulator:
 
     def run(self):
 
+        print("\nRozpoczynanie symulacji...\n")
+        
         for n in self.nodes:
             
             # każdy węzeł ma tę samą ilość danych do przesłania
-            packets_per_node = int(self.total_data_bytes / 1500)
+            
             n.backOff = random.randint(0, 10) * self.slot_time
 
-            for _ in range(packets_per_node):
+            for _ in range(self.packets_per_node):
                 n.generate_packet()
 
             print(f"Węzeł {n.id} wygenerował {len(n.queue)} pakietów.")
@@ -355,6 +365,13 @@ class Simulator:
             
 
         self.events.sort(key=lambda e: e.time)
+
+        # debug: podsumowanie wygenerowanych pakietów przed startem
+        #total_generated_bytes = sum(p.size_bytes for p in self.generated_packets)
+        #total_generated_packets = len(self.generated_packets)
+        #total_queue_packets = sum(len(n.queue) for n in self.nodes)
+        #print(f"DEBUG: generated_packets={total_generated_packets}, total_generated_bytes={total_generated_bytes/1e6} MB")
+        #print(f"DEBUG: packets_per_node (computed)={self.packets_per_node}, sum queues={total_queue_packets}, initial events={len(self.events)}")
 
         while self.events:  
 
