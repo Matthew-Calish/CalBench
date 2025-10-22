@@ -5,17 +5,30 @@ import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
 import simulation as simul
 import tkinter.font as tkfont
+import logging
+from logging.handlers import RotatingFileHandler
+import sys
+
+logger = logging.getLogger("calbench")
+logger.setLevel(logging.DEBUG)
+
+# plik logów z rotacją (max 5 MB, 3 pliki)
+fh = RotatingFileHandler("calbench.log", maxBytes=32*1024*1024, backupCount=3, encoding="utf-8")
+fh.setLevel(logging.DEBUG)
+fh.setFormatter(logging.Formatter("%(asctime)s   %(message)s"))
+
+logger.addHandler(fh)
 
 def run_sim_in_thread(params, out_q):
     try:
-        sim = simul.Simulator(params['num_nodes'], params['bandwidth_mbps'], params['total_data_mega_bytes'])
+        sim = simul.Simulator(params['num_nodes'], params['bandwidth_mbps'], params['total_data_mega_bytes'], logger)
         stop_flag = threading.Event()
 
         def progress_poller():
             try:
                 while not stop_flag.is_set():
-                    out_q.put(('progress', sim.stats.total_bytes_received / 1e6))
-                    time.sleep(0.1)
+                    out_q.put(('progress', None, sim.stats.total_bytes_received / 1e6))
+                    time.sleep(0.5)
             except Exception:
                 pass
 
@@ -24,11 +37,11 @@ def run_sim_in_thread(params, out_q):
 
         results = sim.run()
         # wysyłamy finalny update, zatrzymujemy poller i zwracamy wynik
-        out_q.put(('progress', sim.stats.total_bytes_received / 1e6))
+        out_q.put(('progress', None, sim.stats.total_bytes_received / 1e6))
         stop_flag.set()
-        out_q.put(('done', results))
+        out_q.put(('done', results, sim.stats.total_bytes_received / 1e6))
     except Exception as e:
-        out_q.put(('error', str(e)))
+        out_q.put(('error', str(e), str(e)))
 
 
 
@@ -46,7 +59,7 @@ def start_sim(button, entries, out_q, meter):
         'total_data_mega_bytes': total_data_mega_bytes
     }
 
-    meter.configure(amounttotal=total_data_mega_bytes, amountused=0)
+    meter.configure(amounttotal=total_data_mega_bytes, amountused=0, stepsize=total_data_mega_bytes * 0.1)
     button.config(state=DISABLED)
 
     t = threading.Thread(target=run_sim_in_thread, args=(params, out_q), daemon=True)
@@ -58,7 +71,7 @@ def poll_queue(root, out_q, button, results_frame, meter):
     try:
         while True:
             msg = out_q.get_nowait()
-            typ, payload = msg
+            typ, payload, total_mega_bytes = msg
             if typ == 'done':
                 button.config(state=NORMAL)
                 for widget in results_frame.winfo_children():
@@ -68,12 +81,16 @@ def poll_queue(root, out_q, button, results_frame, meter):
                     ttkb.Label(results_frame, text=f"{k}").grid(row=row, column=0, sticky='w', padx=6, pady=2)
                     ttkb.Label(results_frame, text=str(v), bootstyle="secondary").grid(row=row, column=1, sticky='w', padx=6, pady=2)
                     row += 1
+
+
+
             elif typ == 'error':
                 button.config(state=NORMAL)
             elif typ == 'progress':
                 try:
-                    # payload = total_bytes_received
-                    meter.configure(amountused=payload)
+
+                    meter.configure(amountused=round(total_mega_bytes, 3))
+
                 except Exception:
                     pass
 
@@ -144,7 +161,8 @@ def main():
         textfont=tkfont.Font(size=14, weight="bold"),
         subtextfont=tkfont.Font(size=8), 
         amountused=0, 
-        amounttotal=1, 
+        amounttotal=1,
+        stepsize=0.001,
         metertype='full', 
         subtext='Wysłane dane [MB]', 
         bootstyle='light')
