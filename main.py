@@ -3,12 +3,12 @@ import queue
 import time
 import ttkbootstrap as ttkb
 from ttkbootstrap.constants import *
-import classes as cl
+import simulation as simul
 import tkinter.font as tkfont
 
 def run_sim_in_thread(params, out_q):
     try:
-        sim = cl.Simulator(params['num_nodes'], params['bandwidth_mbps'], params['total_data_mega_bytes'])
+        sim = simul.Simulator(params['num_nodes'], params['bandwidth_mbps'], params['total_data_mega_bytes'])
         stop_flag = threading.Event()
 
         def progress_poller():
@@ -114,7 +114,7 @@ def main():
     ttkb.Label(left, text="Ilość wysłanych danych [MB]").pack(anchor='w', pady=(4,0))
     entries['total_data_mega_bytes'] = ttkb.Entry(left)
     entries['total_data_mega_bytes'].pack(fill=X, pady=4)
-    entries['total_data_mega_bytes'].insert(0, "90")
+    entries['total_data_mega_bytes'].insert(0, "15")
 
     out_q = queue.Queue()
     # ramka wyników umieszczona w prawym panelu — zawsze widoczna i rozciąga się
@@ -149,7 +149,7 @@ def main():
         subtext='Wysłane dane [MB]', 
         bootstyle='light')
     
-    meter.pack(side=TOP, padx=8, pady=(0,6))
+    meter.pack(side=TOP, padx=(0,20), pady=(0,6))
 
 
     start_btn = ttkb.Button(left, text="Start", command=lambda: start_sim(start_btn, entries, out_q, meter), bootstyle="secondary")

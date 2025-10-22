@@ -58,7 +58,8 @@ class Stats:
         avg_latency = np.mean(self.latencies) if self.latencies else 0
 
         avg_retries = self.total_retries / self.packet_count_sent if self.packet_count_sent else 0
-        print(f"\nIlość odbranych mega bajtów: {self.total_bytes_received/1e6} MB")
+        print(f"\n\nIlość odbranych pakietów: {self.packet_count_received}")
+        print(f"Ilość odbranych mega bajtów: {self.total_bytes_received/1e6} MB")
 
         return {
             "Czas przesyłu danych [s]:": round(total_time_s, 3),
@@ -92,6 +93,7 @@ class Medium:
         self.busy_until = max(self.busy_until, end_time)
 
         return transmission_time
+
     
     def end_transmission(self, node, end_time):
         """
@@ -100,7 +102,7 @@ class Medium:
         w przeciwnym razie busy_until = max(pozostałe end_time).
         """
         # usuń dopasowane wpisy (porównanie czasu z epsilonem)
-        EPS = 1e-9
+        EPS = 1e-3
         self.active_transmissions = [
             (n, t) for (n, t) in self.active_transmissions
             if not (n is node and abs(t - end_time) < EPS)
@@ -156,7 +158,7 @@ class Node:
 
             # pakiet uznany za utracony
             self.sim.active_packets.remove(self.queue[0])
-            self.queue.pop(0)
+            self.queue.remove(self.queue[0])
             self.retries = 0
             self.backOff = 0
             self.sim.stats.record_drop()
@@ -209,9 +211,14 @@ class Simulator:
         self.packets_per_node = int(self.bytes_per_node / 1500)
         self.events = []  
 
+        self.debug_help = 0
+        self.debug_set = set()
+
     def handle_event(self, events):
 
         try_events = [e for e in events if e.type == "try_transmission"]
+        start_event = [e for e in events if e.type == "start_transmission"]
+        end_event = [e for e in events if e.type == "end_transmission"]
 
         if len(try_events) > 1:
 
@@ -236,34 +243,41 @@ class Simulator:
 
                         #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
 
-                        new_event = Event(time= self.time + self.slot_time, type="try_transmission", node=event.node)
-                        self.events.append(new_event)
+                        
+                        if event.node.queue:
 
-                        event.node.wasDrop = False
+                            self.debug_set.add(event.node.queue[0].pid)
+                            new_event = Event(time= self.time + self.slot_time, type="try_transmission", node=event.node)
+                            self.events.append(new_event)
+
+                            event.node.wasDrop = False
                     
                     else:
 
                         #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
+                        self.debug_set.add(event.node.queue[0].pid)
+                        if event.node.queue:
 
-                        new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
-                        self.events.append(new_event)
+                            new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                            self.events.append(new_event)
 
             else:
 
                 #medium zajęte, ponów próbę po czasie slot_time
                 #print(f"Medium zajęte o czasie {self.time}, ponawianie prób węzłów {[event.node.id for event in try_events]}")
                 for event in try_events:
+                    if event.node.queue:
 
-                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+                        self.debug_set.add(event.node.queue[0].pid)
+                        new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
 
-                    self.events.append(new_event)
-                    self.events.sort(key=lambda e: e.time)
+                        self.events.append(new_event)
 
-            self.events.sort(key=lambda e: e.time)
 
-        else:
 
-            event = events[0]
+        elif len(try_events) == 1 and len(events) == 1:
+
+            event = try_events[0]
 
             if event.type == "try_transmission":
 
@@ -275,19 +289,31 @@ class Simulator:
                 
                 if self.medium.is_free(self.time):
 
+                    self.debug_help += 1
+
+                    #print(f"Ilość eventów start transmisison: {self.debug_help} / {len(self.generated_packets)}", end='\r')
+
                     #print(f"Node {event.node.id} medium wolne o czasie {self.time}, rozpoczyna nadawanie.")
-                    new_event = Event(time=self.time, type="start_transmission", node=event.node)
-                    
-                    self.events.append(new_event)
-                    self.events.sort(key=lambda e: e.time)
+                    if event.node.queue:
+
+                        new_event = Event(time=self.time, type="start_transmission", node=event.node)
+                        
+                        self.events.append(new_event)
+                        self.events.sort(key=lambda e: e.time)
 
                 else:
+
+                    
+                    
+
                     #print(f"Node {event.node.id} medium zajęte o czasie {self.time}, ponawia próbę.")
                     # medium zajęte, ponów próbę po czasie slot_time
-                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+                    if event.node.queue:
+                        self.debug_set.add(event.node.queue[0].pid)
+                        new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
 
-                    self.events.append(new_event)
-                    self.events.sort(key=lambda e: e.time)
+                        self.events.append(new_event)
+
 
 
             elif event.type == "start_transmission":
@@ -296,14 +322,17 @@ class Simulator:
                 # Jeden węzeł zaczyna nadawać
                 # -------------------------------
 
-                
+
 
                 if not self.medium.is_free(self.time):
 
                     self.stats.record_collision()
                     event.node.handle_collision()
-                    new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
-                    self.events.append(new_event)
+
+                    if event.node.queue:
+                        self.debug_set.add(event.node.queue[0].pid)
+                        new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                        self.events.append(new_event)
                     
 
                 else:
@@ -312,10 +341,10 @@ class Simulator:
 
                     duration = self.medium.start_transmission(self.time, 1500, node=event.node)
 
-                    new_event = Event(time=self.time + duration, type="end_transmission", node=event.node)
-                    self.events.append(new_event)
+                    if event.node.queue:
+                        new_event = Event(time=self.time + duration, type="end_transmission", node=event.node)
+                        self.events.append(new_event)
 
-                self.events.sort(key=lambda e: e.time)
 
 
             elif event.type == "end_transmission":
@@ -323,25 +352,87 @@ class Simulator:
                 # -------------------------------
                 # Jeden węzeł kończy nadawać
                 # -------------------------------
+                
 
                 #print(f"Node {event.node.id} kończy nadawać o czasie {self.time}")
-
+                
                 self.nodes[event.node.id].queue[0].received_time = self.time
                 self.stats.record_received(self.nodes[event.node.id].queue[0])
-                print(f"Ilość odebranych pakietów: {self.stats.packet_count_received} / {len(self.generated_packets)}", end='\r')
+                #print(f"Ilość odebranych pakietów: {self.stats.packet_count_received} / {len(self.generated_packets)}", end='\r')
                 #print(f"Ilosc odebranych mega bajtów: {self.stats.total_bytes_received/1e6} MB", end='\r')
 
                 self.nodes[event.node.id].retries = 0
-                self.nodes[event.node.id].queue.pop(0)
+                self.nodes[event.node.id].queue.remove(event.node.queue[0])
 
                 self.medium.end_transmission(event.node, self.time)
 
                 if event.node.queue:
 
+                    self.debug_set.add(event.node.queue[0].pid)
+
                     new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
                     self.events.append(new_event)
-                    self.events.sort(key=lambda e: e.time)
 
+
+        elif len(end_event) == 1:
+
+            event = end_event[0]
+
+            self.nodes[event.node.id].queue[0].received_time = self.time
+            self.stats.record_received(self.nodes[event.node.id].queue[0])
+            #print(f"Ilość odebranych pakietów: {self.stats.packet_count_received} / {len(self.generated_packets)}", end='\r')
+            #print(f"Ilosc odebranych mega bajtów: {self.stats.total_bytes_received/1e6} MB", end='\r')
+
+            self.nodes[event.node.id].retries = 0
+            self.nodes[event.node.id].queue.remove(event.node.queue[0])
+
+            self.medium.end_transmission(event.node, self.time)
+
+            if event.node.queue:
+
+                self.debug_set.add(event.node.queue[0].pid)
+
+                new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+                self.events.append(new_event)
+
+            for ev in try_events:
+
+                if ev.node.queue:
+                    self.debug_set.add(ev.node.queue[0].pid)
+                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=ev.node)
+                    self.events.append(new_event)
+
+        elif len(start_event) == 1:
+
+            event = start_event[0]
+
+            if not self.medium.is_free(self.time):
+
+                self.stats.record_collision()
+                event.node.handle_collision()
+
+                if event.node.queue:
+                    self.debug_set.add(event.node.queue[0].pid)
+                    new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                    self.events.append(new_event)
+                
+
+            else:
+                
+                #print(f"\nNode {event.node.id} zaczyna nadawać o czasie {self.time}")
+
+                duration = self.medium.start_transmission(self.time, 1500, node=event.node)
+                if event.node.queue:
+                    new_event = Event(time=self.time + duration, type="end_transmission", node=event.node)
+                    self.events.append(new_event)
+
+            for ev in try_events:
+
+                
+                if ev.node.queue:
+                    self.debug_set.add(ev.node.queue[0].pid)
+                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=ev.node)
+                    self.events.append(new_event)
 
 
 
@@ -364,8 +455,6 @@ class Simulator:
             self.events.append(new_event)
             
 
-        self.events.sort(key=lambda e: e.time)
-
         # debug: podsumowanie wygenerowanych pakietów przed startem
         #total_generated_bytes = sum(p.size_bytes for p in self.generated_packets)
         #total_generated_packets = len(self.generated_packets)
@@ -375,18 +464,22 @@ class Simulator:
 
         while self.events:  
 
+            self.events.sort(key=lambda e: e.time)
+
             self.time = self.events[0].time
 
+            print(f"Ilość pakietow retry: {len(self.debug_set)} / {len(self.generated_packets)}", end='\r')
+
             # grupowanie wydarzeń z tolerancją float
-            epsilon = max(1e-9, self.slot_time * 1e-6)
-            events = [event for event in self.events if abs(event.time - self.time) < epsilon]
+
+            events = [event for event in self.events if event.time == self.time]
 
             #print(f"\nCzas symulacji: {self.time}, Obsługiwane id węzłów: {[event.node.id for event in events]}")
 
-            for event in events:
-                self.events.remove(event)
+            self.events = [e for e in self.events if e not in events]
 
             self.handle_event(events) 
+
 
 
         return self.stats.summary(self.time)
