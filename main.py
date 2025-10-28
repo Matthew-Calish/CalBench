@@ -121,9 +121,9 @@ def main():
     ttkb.Label(left, text="Ilość węzłów").pack(anchor='w', pady=(4,0))
     entries['num_nodes'] = ttkb.Entry(left)
     entries['num_nodes'].pack(fill=X, pady=4)
-    entries['num_nodes'].insert(0, "5")
+    entries['num_nodes'].insert(0, "10")
 
-    ttkb.Label(left, text="Przepustowość [mbps]").pack(anchor='w', pady=(4,0))
+    ttkb.Label(left, text="Przepustowość [Mb/s]").pack(anchor='w', pady=(4,0))
     entries['bandwidth_mbps'] = ttkb.Entry(left)
     entries['bandwidth_mbps'].pack(fill=X, pady=4)
     entries['bandwidth_mbps'].insert(0, "50")
@@ -131,7 +131,7 @@ def main():
     ttkb.Label(left, text="Ilość wysłanych danych [MB]").pack(anchor='w', pady=(4,0))
     entries['total_data_mega_bytes'] = ttkb.Entry(left)
     entries['total_data_mega_bytes'].pack(fill=X, pady=4)
-    entries['total_data_mega_bytes'].insert(0, "15")
+    entries['total_data_mega_bytes'].insert(0, "150")
 
     out_q = queue.Queue()
     # ramka wyników umieszczona w prawym panelu — zawsze widoczna i rozciąga się
@@ -145,13 +145,13 @@ def main():
     ttkb.Label(results_frame, text="Przepustowość [Mb/s]:").grid(row=1, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=1, column=1, sticky='w', padx=6, pady=2)
 
-    ttkb.Label(results_frame, text="Średnie opuźnienia [s]:").grid(row=2, column=0, sticky='w', padx=6, pady=2)
+    ttkb.Label(results_frame, text="Średnie opuźnienia [ms]:").grid(row=2, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=2, column=1, sticky='w', padx=6, pady=2)
 
     ttkb.Label(results_frame, text="Kolizje:").grid(row=3, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=3, column=1, sticky='w', padx=6, pady=2)
 
-    ttkb.Label(results_frame, text="Porzucone pakiety:").grid(row=4, column=0, sticky='w', padx=6, pady=2)
+    ttkb.Label(results_frame, text="Porzucone ramki:").grid(row=4, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=4, column=1, sticky='w', padx=6, pady=2)
 
 

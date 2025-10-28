@@ -3,16 +3,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # -------------------------------
-# 1. Packet
+# 1. Frame
 # -------------------------------
-class Packet:
-    def __init__(self, pid, src, dst, size_bytes, gen_time):
-        self.pid = pid
-        self.src = src
-        self.dst = dst
+class Frame:
+    def __init__(self, fid, size_bytes, gen_time):
+        self.fid = fid
         self.size_bytes = size_bytes
         self.generation_time = gen_time
-        self.sent_time = None
+        self.first_attempt_time = None
         self.received_time = None
         self.retries = 0
 
@@ -24,23 +22,19 @@ class Stats:
     def __init__(self):
         self.total_bytes_transmitted = 0
         self.total_bytes_received = 0
-        self.packet_count_sent = 0
-        self.packet_count_received = 0
+        self.frame_count_received = 0
         self.collision_events = 0
         self.latencies = []
-        self.packets_dropped = 0
+        self.frames_dropped = 0
         self.total_retries = 0
 
-    def record_sent(self, packet):
-        self.packet_count_sent += 1
-        self.total_bytes_transmitted += packet.size_bytes
 
-    def record_received(self, packet):
+    def record_received(self, frame):
 
-        self.packet_count_received += 1
-        self.total_bytes_received += packet.size_bytes
-
-        self.latencies.append(packet.received_time - packet.generation_time)
+        self.frame_count_received += 1
+        self.total_bytes_received += frame.size_bytes
+        print(f"\nLatencje: {frame.first_attempt_time}\n")
+        self.latencies.append(frame.received_time - frame.first_attempt_time)
 
 
     def record_collision(self):
@@ -50,23 +44,24 @@ class Stats:
         self.total_retries += 1
 
     def record_drop(self):
-        self.packets_dropped += 1
+        self.frames_dropped += 1
 
     def summary(self, total_time_s):
 
         throughput_mbps = (self.total_bytes_received * 8) / (total_time_s * 1e6)
+        
         avg_latency = np.mean(self.latencies) if self.latencies else 0
+        avg_latancy_ms = avg_latency * 1000
 
-        avg_retries = self.total_retries / self.packet_count_sent if self.packet_count_sent else 0
-        print(f"\n\nIlość odbranych pakietów: {self.packet_count_received}")
+        print(f"\n\nIlość odbranych ramek: {self.frame_count_received}")
         print(f"Ilość odbranych mega bajtów: {self.total_bytes_received/1e6} MB")
 
         return {
             "Czas przesyłu danych [s]:": round(total_time_s, 3),
             "Przepustowość [Mb/s]:": round(throughput_mbps, 3),
-            "Średnie opuźnienia [s]:": round(avg_latency, 3),
+            "Średnie opuźnienia [s]:": round(avg_latancy_ms, 3),
             "Kolizje:": self.collision_events,
-            "Porzucone pakiety:": self.packets_dropped,
+            "Porzucone ramki:": self.frames_dropped,
         }
 
 
@@ -83,9 +78,9 @@ class Medium:
     def is_free(self, current_time):
         return current_time >= self.busy_until
 
-    def start_transmission(self, current_time, packet_size_bytes, node=None):
+    def start_transmission(self, current_time, frame_size_bytes, node=None):
 
-        transmission_time = (packet_size_bytes * 8) / self.bandwidth_bps
+        transmission_time = (frame_size_bytes * 8) / self.bandwidth_bps
 
         end_time = current_time + transmission_time
         # dodajemy aktywną transmisję i aktualizujemy busy_until na najdalszy koniec
@@ -128,36 +123,27 @@ class Node:
         self.wasDrop = False 
         self.backOff = 0
         self.queue = []
-        self.packet_length = 1500
+        self.frame_length = 1500
 
-    def generate_packet(self):
+    def generate_frame(self):
 
-        pid = len(self.sim.generated_packets) + 1
-        packet = Packet(pid, self.id, "Server", self.packet_length, self.sim.time)
+        fid = len(self.sim.generated_frames) + 1
+        frame = Frame(fid, self.frame_length, self.sim.time)
 
-        self.queue.append(packet)
-        self.sim.generated_packets.append(packet)
-        self.sim.active_packets.append(packet) 
+        self.queue.append(frame)
+        self.sim.generated_frames.append(frame)
+        self.sim.active_frames.append(frame) 
 
-    def attempt_send(self):
-
-        if not self.queue:
-            return
-        
-        packet = self.queue[0]
-        packet.sent_time = self.sim.time
-
-        return packet
 
 
     def handle_collision(self):
 
         if self.retries > 15:
 
-            #print(f"\nNode {self.id}: Packet {self.queue[0].pid} dropped after 16 retries.\n")
+            #print(f"\nNode {self.id}: frame {self.queue[0].fid} dropped after 16 retries.\n")
 
-            # pakiet uznany za utracony
-            self.sim.active_packets.remove(self.queue[0])
+            # ramka uznany za utracony
+            self.sim.active_frames.remove(self.queue[0])
             self.queue.remove(self.queue[0])
             self.retries = 0
             self.backOff = 0
@@ -183,7 +169,7 @@ class Event:
         self.time = time
         self.type = type
         self.node = node
-        self.packet = None
+        self.frame = None
 
 
 
@@ -203,12 +189,12 @@ class Simulator:
         self.medium = Medium(bandwidth_mbps)
         self.stats = Stats()
 
-        self.generated_packets = []
-        self.active_packets = []
+        self.generated_frames = []
+        self.active_frames = []
 
         self.total_data_bytes = total_data_mega_bytes * 1e6  # konwersja MB na bajty
         self.bytes_per_node = self.total_data_bytes / self.num_nodes
-        self.packets_per_node = int(self.bytes_per_node / 1500)
+        self.frames_per_node = int(self.bytes_per_node / 1500)
         self.events = []  
 
         self.debug_help = 0
@@ -240,6 +226,8 @@ class Simulator:
                 self.stats.record_collision()
                 for event in try_events:
 
+                    if event.node.queue and event.node.queue[0].first_attempt_time is None:
+                        event.node.queue[0].first_attempt_time = self.time
                     
                     event.node.handle_collision()
 
@@ -250,7 +238,7 @@ class Simulator:
                         
                         if event.node.queue:
 
-                            self.debug_set.add(event.node.queue[0].pid)
+                            self.debug_set.add(event.node.queue[0].fid)
                             new_event = Event(time= self.time + self.slot_time, type="try_transmission", node=event.node)
                             self.events.append(new_event)
 
@@ -259,7 +247,7 @@ class Simulator:
                     else:
 
                         #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
-                        self.debug_set.add(event.node.queue[0].pid)
+                        self.debug_set.add(event.node.queue[0].fid)
                         if event.node.queue:
 
                             new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
@@ -274,9 +262,13 @@ class Simulator:
 
 
                 for event in try_events:
+
                     if event.node.queue:
 
-                        self.debug_set.add(event.node.queue[0].pid)
+                        if event.node.queue[0].first_attempt_time is None:
+                            event.node.queue[0].first_attempt_time = self.time
+
+                        self.debug_set.add(event.node.queue[0].fid)
                         new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
 
                         self.events.append(new_event)
@@ -286,7 +278,7 @@ class Simulator:
         elif len(events) == 1:
 
             
-            #self.logger.debug(f"Jeden event o czasie {self.time} dla węzła {events[0].node.id}, pozostało pakietów do wysłania: {len(events[0].node.queue)}")
+            #self.logger.debug(f"Jeden event o czasie {self.time} dla węzła {events[0].node.id}, pozostało ramek do wysłania: {len(events[0].node.queue)}")
             #self.logger.debug(f"Rozmiar eventów w kolejce na początku: {len(self.events)}")
             event = events[0]
 
@@ -297,19 +289,22 @@ class Simulator:
                 # -------------------------------
 
                 #print(f"Node {event.node.id} próbuje nadać o czasie {self.time}")
+
+                if event.node.queue and event.node.queue[0].first_attempt_time is None:
+                    event.node.queue[0].first_attempt_time = self.time
                 
                 if self.medium.is_free(self.time):
 
                     self.debug_help += 1
 
-                    #print(f"Ilość eventów start transmisison: {self.debug_help} / {len(self.generated_packets)}", end='\r')
+                    #print(f"Ilość eventów start transmisison: {self.debug_help} / {len(self.generated_frames)}", end='\r')
 
                     #print(f"Node {event.node.id} medium wolne o czasie {self.time}, rozpoczyna nadawanie.")
                     if event.node.queue:
 
                         #new_event = Event(time=self.time, type="start_transmission", node=event.node)
                         new_event = Event(time=self.time, type="start_transmission", node=event.node)
-                        new_event.packet = event.node.queue[0]
+                        new_event.frame = event.node.queue[0]
                         
                         self.events.append(new_event)
                         self.events.sort(key=lambda e: e.time)
@@ -322,7 +317,7 @@ class Simulator:
                     #print(f"Node {event.node.id} medium zajęte o czasie {self.time}, ponawia próbę.")
                     # medium zajęte, ponów próbę po czasie slot_time
                     if event.node.queue:
-                        self.debug_set.add(event.node.queue[0].pid)
+                        self.debug_set.add(event.node.queue[0].fid)
                         new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
 
                         self.events.append(new_event)
@@ -342,10 +337,27 @@ class Simulator:
                     self.stats.record_collision()
                     event.node.handle_collision()
 
-                    if event.node.queue:
-                        self.debug_set.add(event.node.queue[0].pid)
-                        new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
-                        self.events.append(new_event)
+                    if event.node.wasDrop:
+
+                        #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
+
+                        
+                        if event.node.queue:
+
+                            self.debug_set.add(event.node.queue[0].fid)
+                            new_event = Event(time= self.time + self.slot_time, type="try_transmission", node=event.node)
+                            self.events.append(new_event)
+
+                            event.node.wasDrop = False
+                    
+                    else:
+
+                        #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
+                        self.debug_set.add(event.node.queue[0].fid)
+                        if event.node.queue:
+
+                            new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                            self.events.append(new_event)
                     
 
                 else:
@@ -355,10 +367,10 @@ class Simulator:
 
                     duration = self.medium.start_transmission(self.time, 1500, node=event.node)
 
-                    # end event powinien odnosić się do tego samego pakietu co start
-                    pkt = event.packet if getattr(event, "packet", None) is not None else (event.node.queue[0] if event.node.queue else None)
+                    # end event powinien odnosić się do tego samego ramkau co start
+                    pkt = event.frame if getattr(event, "frame", None) is not None else (event.node.queue[0] if event.node.queue else None)
                     new_event = Event(time=self.time + duration, type="end_transmission", node=event.node)
-                    new_event.packet = pkt
+                    new_event.frame = pkt
 
                     #self.logger.debug(f"Węzeł {event.node.id} rozpoczął transmisję o czasie {self.time} bez kolizji. Czas konca: {self.time + duration} ")
                     #self.logger.debug(f"Rozmiar eventów w kolejce: {len(self.events)}")
@@ -377,34 +389,34 @@ class Simulator:
                 #print(f"Node {event.node.id} kończy nadawać o czasie {self.time}")
 
                 # defensywnie: pracujemy na konkretnym pakiecie powiązanym z eventem
-                pkt = getattr(event, "packet", None)
+                pkt = getattr(event, "frame", None)
                 if pkt is not None and pkt in event.node.queue:
                     pkt.received_time = self.time
                     self.stats.record_received(pkt)
-                    # usuń konkretny pakiet z kolejki
+                    # usuń konkretny ramka z kolejki
                     event.node.queue.remove(pkt)
                 else:
                     #self.logger.debug(f"Jakis else")
-                    # jeśli pakiet z jakiegoś powodu nie istnieje w queue, log minimalnie i kontynuuj
+                    # jeśli ramka z jakiegoś powodu nie istnieje w queue, log minimalnie i kontynuuj
                     # (ważne: i tak musimy zakończyć transmisję w medium)
                     pass
 
-                # zresetuj retry counter jeśli istniał (nie szkodzi jeśli pakiet był już usunięty)
+                # zresetuj retry counter jeśli istniał (nie szkodzi jeśli ramka był już usunięty)
                 event.node.retries = 0
 
                 # zakończ transmisję w medium (użyj dokładnego time z event)
                 self.medium.end_transmission(event.node, event.time)
 
-                # jeśli pozostały pakiety w kolejce, zaplanuj następną próbę
+                # jeśli pozostały ramki w kolejce, zaplanuj następną próbę
                 if event.node.queue:
-                    #self.logger.debug(f"Węzeł {event.node.id} ma więcej pakietów, planuje następną próbę.")
-                    self.debug_set.add(event.node.queue[0].pid)
+                    #self.logger.debug(f"Węzeł {event.node.id} ma więcej ramek, planuje następną próbę.")
+                    self.debug_set.add(event.node.queue[0].fid)
                     new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
                     self.events.append(new_event)
                     self.events.sort(key=lambda e: e.time)
                 else:
                     pass
-                    #self.logger.debug(f"Węzeł {event.node.id} nie ma więcej pakietów do wysłania.")
+                    #self.logger.debug(f"Węzeł {event.node.id} nie ma więcej ramek do wysłania.")
 
 
 
@@ -417,7 +429,7 @@ class Simulator:
 
             self.nodes[event.node.id].queue[0].received_time = self.time
             self.stats.record_received(self.nodes[event.node.id].queue[0])
-            #print(f"Ilość odebranych pakietów: {self.stats.packet_count_received} / {len(self.generated_packets)}", end='\r')
+            #print(f"Ilość odebranych ramek: {self.stats.frame_count_received} / {len(self.generated_frames)}", end='\r')
             #print(f"Ilosc odebranych mega bajtów: {self.stats.total_bytes_received/1e6} MB", end='\r')
 
             self.nodes[event.node.id].retries = 0
@@ -427,7 +439,7 @@ class Simulator:
 
             if event.node.queue:
 
-                self.debug_set.add(event.node.queue[0].pid)
+                self.debug_set.add(event.node.queue[0].fid)
 
                 new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
                 self.events.append(new_event)
@@ -435,7 +447,11 @@ class Simulator:
             for ev in try_events:
 
                 if ev.node.queue:
-                    self.debug_set.add(ev.node.queue[0].pid)
+
+                    if ev.node.queue[0].first_attempt_time is None:
+                        ev.node.queue[0].first_attempt_time = self.time
+
+                    self.debug_set.add(ev.node.queue[0].fid)
                     new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=ev.node)
                     self.events.append(new_event)
 
@@ -455,10 +471,27 @@ class Simulator:
                 self.stats.record_collision()
                 event.node.handle_collision()
 
-                if event.node.queue:
-                    self.debug_set.add(event.node.queue[0].pid)
-                    new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
-                    self.events.append(new_event)
+                if event.node.wasDrop:
+
+                    #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
+
+                    
+                    if event.node.queue:
+
+                        self.debug_set.add(event.node.queue[0].fid)
+                        new_event = Event(time= self.time + self.slot_time, type="try_transmission", node=event.node)
+                        self.events.append(new_event)
+
+                        event.node.wasDrop = False
+                
+                else:
+
+                    #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
+                    self.debug_set.add(event.node.queue[0].fid)
+                    if event.node.queue:
+
+                        new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
+                        self.events.append(new_event)
                 
 
             else:
@@ -474,7 +507,11 @@ class Simulator:
 
                 
                 if ev.node.queue:
-                    self.debug_set.add(ev.node.queue[0].pid)
+
+                    if ev.node.queue[0].first_attempt_time is None:
+                        ev.node.queue[0].first_attempt_time = self.time
+
+                    self.debug_set.add(ev.node.queue[0].fid)
                     new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=ev.node)
                     self.events.append(new_event)
         
@@ -491,26 +528,26 @@ class Simulator:
         print("\nRozpoczynanie symulacji...\n")
         
         for n in self.nodes:
-            
+
             # każdy węzeł ma tę samą ilość danych do przesłania
             
             n.backOff = random.randint(0, 10) * self.slot_time
 
-            for _ in range(self.packets_per_node):
-                n.generate_packet()
+            for _ in range(self.frames_per_node):
+                n.generate_frame()
 
-            print(f"Węzeł {n.id} wygenerował {len(n.queue)} pakietów.")
+            print(f"Węzeł {n.id} wygenerował {len(n.queue)} ramek.")
 
             new_event = Event(time=n.backOff, type="try_transmission", node=n)
             self.events.append(new_event)
             
 
-        # debug: podsumowanie wygenerowanych pakietów przed startem
-        #total_generated_bytes = sum(p.size_bytes for p in self.generated_packets)
-        #total_generated_packets = len(self.generated_packets)
-        #total_queue_packets = sum(len(n.queue) for n in self.nodes)
-        #print(f"DEBUG: generated_packets={total_generated_packets}, total_generated_bytes={total_generated_bytes/1e6} MB")
-        #print(f"DEBUG: packets_per_node (computed)={self.packets_per_node}, sum queues={total_queue_packets}, initial events={len(self.events)}")
+        # debug: podsumowanie wygenerowanych ramek przed startem
+        #total_generated_bytes = sum(p.size_bytes for p in self.generated_frames)
+        #total_generated_frames = len(self.generated_frames)
+        #total_queue_frames = sum(len(n.queue) for n in self.nodes)
+        #print(f"DEBUG: generated_frames={total_generated_frames}, total_generated_bytes={total_generated_bytes/1e6} MB")
+        #print(f"DEBUG: frames_per_node (computed)={self.frames_per_node}, sum queues={total_queue_frames}, initial events={len(self.events)}")
 
         while self.events:  
 
@@ -520,7 +557,7 @@ class Simulator:
 
             self.time = self.events[0].time
 
-            #print(f"Ilość pakietow retry: {len(self.debug_set)} / {len(self.generated_packets)}", end='\r')
+            #print(f"Ilość ramkaow retry: {len(self.debug_set)} / {len(self.generated_frames)}", end='\r')
 
             # grupowanie wydarzeń z tolerancją float
             epsilon  = 1e-6
