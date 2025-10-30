@@ -33,7 +33,7 @@ class Stats:
 
         self.frame_count_received += 1
         self.total_bytes_received += frame.size_bytes
-        print(f"\nLatencje: {frame.first_attempt_time}\n")
+
         self.latencies.append(frame.received_time - frame.first_attempt_time)
 
 

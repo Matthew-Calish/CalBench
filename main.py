@@ -104,7 +104,7 @@ def poll_queue(root, out_q, button, results_frame, meter):
 def main():
     root = ttkb.Window(themename="vapor")
     root.title("CalBench")
-    root.geometry("500x350")
+    root.geometry("600x450")
     root.resizable(False, False)
 
     frm = ttkb.Frame(root, padding=12)
