@@ -1,7 +1,8 @@
 import random
 import numpy as np
 import matplotlib.pyplot as plt
-
+import logging
+from logging.handlers import RotatingFileHandler
 # -------------------------------
 # 1. Frame
 # -------------------------------
@@ -27,7 +28,10 @@ class Stats:
         self.latencies = []
         self.frames_dropped = 0
         self.total_retries = 0
+        self.perfect_load_bytes = 0
 
+    def set_perfect_load_bytes(self, perfect_load_bytes):
+        self.perfect_load_bytes = perfect_load_bytes
 
     def record_received(self, frame):
 
@@ -35,6 +39,7 @@ class Stats:
         self.total_bytes_received += frame.size_bytes
 
         self.latencies.append(frame.received_time - frame.first_attempt_time)
+
 
 
     def record_collision(self):
@@ -55,11 +60,12 @@ class Stats:
 
         print(f"\n\nIlość odbranych ramek: {self.frame_count_received}")
         print(f"Ilość odbranych mega bajtów: {self.total_bytes_received/1e6} MB")
+        print(f"Maksymalna ilosc odebranych mega bajtów {self.perfect_load_bytes/1e6}")
 
         return {
             "Czas przesyłu danych [s]:": round(total_time_s, 3),
             "Przepustowość [Mb/s]:": round(throughput_mbps, 3),
-            "Średnie opuźnienia [s]:": round(avg_latancy_ms, 3),
+            "Średnie opuźnienia [ms]:": round(avg_latancy_ms, 3),
             "Kolizje:": self.collision_events,
             "Porzucone ramki:": self.frames_dropped,
         }
@@ -97,7 +103,7 @@ class Medium:
         w przeciwnym razie busy_until = max(pozostałe end_time).
         """
         # usuń dopasowane wpisy (porównanie czasu z epsilonem)
-        EPS = 1e-3
+        EPS = 1e-6
         self.active_transmissions = [
             (n, t) for (n, t) in self.active_transmissions
             if not (n is node and abs(t - end_time) < EPS)
@@ -125,15 +131,14 @@ class Node:
         self.queue = []
         self.frame_length = 1500
 
-    def generate_frame(self):
+    def generate_frame_now(self, current_time):
 
         fid = len(self.sim.generated_frames) + 1
-        frame = Frame(fid, self.frame_length, self.sim.time)
+        frame = Frame(fid, self.frame_length, current_time)
 
         self.queue.append(frame)
         self.sim.generated_frames.append(frame)
-        self.sim.active_frames.append(frame) 
-
+        self.sim.active_frames.append(frame)
 
 
     def handle_collision(self):
@@ -178,11 +183,15 @@ class Event:
 # -------------------------------
 class Simulator:
 
-    def __init__(self, num_nodes, bandwidth_mbps, total_data_mega_bytes, logger):
-        print(f"\nInicjalizacja symulatora z {num_nodes} węzłami, przepustowością {bandwidth_mbps} Mb/s, docelową ilością danych {total_data_mega_bytes} MB.\n")
+    def __init__(self, max_sim_time, num_nodes, bandwidth_mbps, total_load_per_sec, logger):
 
+        print(f"Initializing simulator with {num_nodes} nodes, {bandwidth_mbps} Mb/s bandwidth, "
+              f"{total_load_per_sec} Mb/s total load, max sim time {max_sim_time} s.")
+
+        self.max_sim_time = max_sim_time
         self.time = 0
         self.slot_time = 512 / (bandwidth_mbps * 1e6)
+        self.inter_frame_gap = 96 / (bandwidth_mbps * 1e6)
 
         self.num_nodes = num_nodes
         self.nodes = [Node(i, self) for i in range(num_nodes)]
@@ -191,10 +200,16 @@ class Simulator:
 
         self.generated_frames = []
         self.active_frames = []
+        self.frame_size_bytes = 1500
 
-        self.total_data_bytes = total_data_mega_bytes * 1e6  # konwersja MB na bajty
-        self.bytes_per_node = self.total_data_bytes / self.num_nodes
-        self.frames_per_node = int(self.bytes_per_node / 1500)
+        self.total_load_bps = total_load_per_sec * 1e6
+        self.perfect_total_bytes = int((self.total_load_bps * self.max_sim_time) / 8)
+        self.stats.set_perfect_load_bytes(self.perfect_total_bytes)
+
+        self.frames_per_sec_total = self.total_load_bps / (self.frame_size_bytes * 8)
+        self.frames_per_sec_per_node = self.frames_per_sec_total / self.num_nodes
+        self.interarrival_det = 1.0 / self.frames_per_sec_per_node if self.frames_per_sec_per_node > 0 else float('inf')
+
         self.events = []  
 
         self.debug_help = 0
@@ -204,9 +219,37 @@ class Simulator:
 
     def handle_event(self, events):
 
+
         try_events = [e for e in events if e.type == "try_transmission"]
         start_event = [e for e in events if e.type == "start_transmission"]
         end_event = [e for e in events if e.type == "end_transmission"]
+        generate_events = [e for e in events if e.type == "generate_frame"]
+
+        # obsłuż generacje ramek (może być wiele równocześnie)
+        for ge in generate_events:
+            node = ge.node
+            
+            #self.logger.debug(f"Węzeł {node.id} generuje ramkę o czasie {ge.time}")
+            #self.logger.debug(f"Rozmiar eventów w kolejce dla noda {node.id} przed generacją: {len(ge.node.queue)}")
+            # generuj ramkę tylko jeśli nie przekroczyliśmy max_sim_time
+            if ge.time <= self.max_sim_time:
+                node.generate_frame_now(ge.time)  # użyj ge.time zamiast self.time
+
+                #if not any(e for e in self.events if e.node == node and e.type == "try_transmission"):
+                    #new_ev = Event(time=ge.time, type="try_transmission", node=node)
+                    #self.events.append(new_ev)
+
+                if len(node.queue) == 1:
+                    new_ev = Event(time=ge.time, type="try_transmission", node=node)
+                    self.events.append(new_ev)
+
+
+                next_time = ge.time + self.interarrival_det
+                
+
+                self.events.append(Event(time=next_time, type="generate_frame", node=node))
+
+
 
         if len(try_events) > 1 and not start_event and not end_event:
 
@@ -247,7 +290,7 @@ class Simulator:
                     else:
 
                         #print(f"Dodano węzeł {event.node.id} do ponownej próby o czasie {event.node.backOff}")
-                        self.debug_set.add(event.node.queue[0].fid)
+                        #self.debug_set.add(event.node.queue[0].fid)
                         if event.node.queue:
 
                             new_event = Event(time= event.node.backOff, type="try_transmission", node=event.node)
@@ -257,8 +300,8 @@ class Simulator:
 
                 #medium zajęte, ponów próbę po czasie slot_time
                 #print(f"Medium zajęte o czasie {self.time}, ponawianie prób węzłów {[event.node.id for event in try_events]}")
-                #.debug(f"Medium zajęte o czasie {self.time}, ponawianie prób węzłów {[event.node.id for event in try_events]}")
-                #self.logger.debug(f"Rozmiar eventów w kolejce: {len(self.events)}")
+                #self.logger.debug(f"Medium zajęte o czasie {self.time}, ponawianie prób węzłów {[event.node.id for event in try_events]}")
+                ##self.logger.debug(f"Rozmiar eventów w kolejce: {len(self.events)}")
 
 
                 for event in try_events:
@@ -278,17 +321,20 @@ class Simulator:
         elif len(events) == 1:
 
             
-            #self.logger.debug(f"Jeden event o czasie {self.time} dla węzła {events[0].node.id}, pozostało ramek do wysłania: {len(events[0].node.queue)}")
-            #self.logger.debug(f"Rozmiar eventów w kolejce na początku: {len(self.events)}")
+            ##self.logger.debug(f"Jeden event o czasie {self.time} dla węzła {events[0].node.id}, pozostało ramek do wysłania: {len(events[0].node.queue)}")
+            ##self.logger.debug(f"Rozmiar eventów w kolejce na początku: {len(self.events)}")
             event = events[0]
 
             if event.type == "try_transmission":
+
 
                 # -------------------------------
                 # Jeden węzeł próbuje nadawać
                 # -------------------------------
 
                 #print(f"Node {event.node.id} próbuje nadać o czasie {self.time}")
+
+                #self.logger.debug(f"Węzeł {event.node.id} próbuje nadawać o czasie {self.time}")
 
                 if event.node.queue and event.node.queue[0].first_attempt_time is None:
                     event.node.queue[0].first_attempt_time = self.time
@@ -311,10 +357,9 @@ class Simulator:
 
                 else:
 
-                    
-                    
 
                     #print(f"Node {event.node.id} medium zajęte o czasie {self.time}, ponawia próbę.")
+                    #self.logger.debug(f"Węzeł {event.node.id} medium zajęte o czasie {self.time}, ponawia próbę.")
                     # medium zajęte, ponów próbę po czasie slot_time
                     if event.node.queue:
                         self.debug_set.add(event.node.queue[0].fid)
@@ -333,6 +378,8 @@ class Simulator:
                 #print(f"Node {event.node.id} zaczyna nadawać o czasie {self.time}")
 
                 if not self.medium.is_free(self.time):
+
+                    #self.logger.debug(f"Węzeł {event.node.id} napotkał kolizję przy starcie nadawania o czasie {self.time}")
 
                     self.stats.record_collision()
                     event.node.handle_collision()
@@ -364,7 +411,6 @@ class Simulator:
                     
                     #print(f"\nNode {event.node.id} zaczyna nadawać o czasie {self.time}")
                     
-
                     duration = self.medium.start_transmission(self.time, 1500, node=event.node)
 
                     # end event powinien odnosić się do tego samego ramkau co start
@@ -373,9 +419,9 @@ class Simulator:
                     new_event.frame = pkt
 
                     #self.logger.debug(f"Węzeł {event.node.id} rozpoczął transmisję o czasie {self.time} bez kolizji. Czas konca: {self.time + duration} ")
-                    #self.logger.debug(f"Rozmiar eventów w kolejce: {len(self.events)}")
+                    ##self.logger.debug(f"Rozmiar eventów w kolejce: {len(self.events)}")
                     self.events.append(new_event)
-                    #self.logger.debug(f"Rozmiar eventów w kolejce: {len(self.events)}")
+                    ##self.logger.debug(f"Rozmiar eventów w kolejce: {len(self.events)}")
 
 
 
@@ -396,7 +442,7 @@ class Simulator:
                     # usuń konkretny ramka z kolejki
                     event.node.queue.remove(pkt)
                 else:
-                    #self.logger.debug(f"Jakis else")
+                    ##self.logger.debug(f"Jakis else")
                     # jeśli ramka z jakiegoś powodu nie istnieje w queue, log minimalnie i kontynuuj
                     # (ważne: i tak musimy zakończyć transmisję w medium)
                     pass
@@ -409,21 +455,25 @@ class Simulator:
 
                 # jeśli pozostały ramki w kolejce, zaplanuj następną próbę
                 if event.node.queue:
-                    #self.logger.debug(f"Węzeł {event.node.id} ma więcej ramek, planuje następną próbę.")
+
+                    ##self.logger.debug(f"Węzeł {event.node.id} ma więcej ramek, planuje następną próbę.")
+
                     self.debug_set.add(event.node.queue[0].fid)
-                    new_event = Event(time=self.time + self.slot_time, type="try_transmission", node=event.node)
+                    new_event = Event(time=self.time + self.inter_frame_gap, type="try_transmission", node=event.node)
                     self.events.append(new_event)
                     self.events.sort(key=lambda e: e.time)
                 else:
+                    ##self.logger.debug(f"Węzeł {event.node.id} nie ma więcej ramek do wysłania.")
                     pass
-                    #self.logger.debug(f"Węzeł {event.node.id} nie ma więcej ramek do wysłania.")
+                    
+                
 
 
 
 
         elif len(try_events) > 0 and len(end_event) == 1:
 
-            #self.logger.debug(f"Jeden węzeł {end_event[0].node.id} kończy nadawać o czasie {self.time} wezly co chca nadawac: {[w.node.id for w in try_events]}")
+            ##self.logger.debug(f"Jeden węzeł {end_event[0].node.id} kończy nadawać o czasie {self.time} wezly co chca nadawac: {[w.node.id for w in try_events]}")
 
             event = end_event[0]
 
@@ -462,7 +512,7 @@ class Simulator:
 
         elif len(try_events) > 0 and len(start_event) == 1:
 
-            #self.logger.debug(f"Jeden węzeł {start_event[0].node.id} zaczyna nadawać o czasie {self.time} i probuje nadawac {[w.node.id for w in try_events]} węzłów")
+            ##self.logger.debug(f"Jeden węzeł {start_event[0].node.id} zaczyna nadawać o czasie {self.time} i probuje nadawac {[w.node.id for w in try_events]} węzłów")
 
             event = start_event[0]
 
@@ -519,7 +569,7 @@ class Simulator:
 
 
             pass
-            #self.logger.debug(f"Co jest {self.time}, start: {[e.node.id for e in start_event]}, end: {[e.node.id for e in end_event]}, try: {[e.node.id for e in try_events]}")
+            ##self.logger.debug(f"Co jest {self.time}, start: {[e.node.id for e in start_event]}, end: {[e.node.id for e in end_event]}, try: {[e.node.id for e in try_events]}")
 
 
 
@@ -527,31 +577,18 @@ class Simulator:
 
         print("\nRozpoczynanie symulacji...\n")
         
+
         for n in self.nodes:
-
-            # każdy węzeł ma tę samą ilość danych do przesłania
-            
-            n.backOff = random.randint(0, 10) * self.slot_time
-
-            for _ in range(self.frames_per_node):
-                n.generate_frame()
-
-            print(f"Węzeł {n.id} wygenerował {len(n.queue)} ramek.")
-
-            new_event = Event(time=n.backOff, type="try_transmission", node=n)
+            # losowy offset, żeby nie synchronizować wszystkiego
+            #initial_offset = random.random() * self.interarrival_det if self.interarrival_det != float('inf') else 0.0
+            new_event = Event(time=self.interarrival_det, type="generate_frame", node=n)
             self.events.append(new_event)
-            
 
-        # debug: podsumowanie wygenerowanych ramek przed startem
-        #total_generated_bytes = sum(p.size_bytes for p in self.generated_frames)
-        #total_generated_frames = len(self.generated_frames)
-        #total_queue_frames = sum(len(n.queue) for n in self.nodes)
-        #print(f"DEBUG: generated_frames={total_generated_frames}, total_generated_bytes={total_generated_bytes/1e6} MB")
-        #print(f"DEBUG: frames_per_node (computed)={self.frames_per_node}, sum queues={total_queue_frames}, initial events={len(self.events)}")
 
-        while self.events:  
+        while self.time < self.max_sim_time and self.events:
+            #print(f"Czas symulacji: {self.time:.6f} s, Pozostało eventów: {len(self.events)}", end='\r')
 
-            #self.logger.debug(f"Rozmiar eventów w kolejce w while: {len(self.events)}")
+            ##self.logger.debug(f"Rozmiar eventów w kolejce w while: {len(self.events)}")
 
             self.events.sort(key=lambda e: e.time)
 
@@ -567,8 +604,20 @@ class Simulator:
 
             self.events = [e for e in self.events if e not in events]
 
-            self.handle_event(events) 
+            self.handle_event(events)
 
         print("\nSymulacja zakończona.\n")
 
         return self.stats.summary(self.time)
+    
+logger = logging.getLogger("calbench")
+logger.setLevel(logging.DEBUG)
+
+fh = RotatingFileHandler("calbench.log", maxBytes=32*1024*1024, backupCount=3, encoding="utf-8")
+fh.setLevel(logging.DEBUG)
+fh.setFormatter(logging.Formatter("%(asctime)s   %(message)s"))
+
+logger.addHandler(fh)
+
+cos = Simulator(50,2,100,30, logger)
+cos.run()

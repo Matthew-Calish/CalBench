@@ -21,7 +21,7 @@ logger.addHandler(fh)
 
 def run_sim_in_thread(params, out_q):
     try:
-        sim = simul.Simulator(params['num_nodes'], params['bandwidth_mbps'], params['total_data_mega_bytes'], logger)
+        sim = simul.Simulator(params['max_sim_time'], params['num_nodes'], params['bandwidth_mbps'], params['total_load_per_sec_Mb'], logger)
         stop_flag = threading.Event()
 
         def progress_poller():
@@ -36,10 +36,12 @@ def run_sim_in_thread(params, out_q):
         p.start()
 
         results = sim.run()
+
         # wysyłamy finalny update, zatrzymujemy poller i zwracamy wynik
         out_q.put(('progress', None, sim.stats.total_bytes_received / 1e6))
         stop_flag.set()
         out_q.put(('done', results, sim.stats.total_bytes_received / 1e6))
+        
     except Exception as e:
         out_q.put(('error', str(e), str(e)))
 
@@ -47,19 +49,22 @@ def run_sim_in_thread(params, out_q):
 
 def start_sim(button, entries, out_q, meter):
     try:
+        max_sim_time = int(entries['max_sim_time'].get())
         num_nodes = int(entries['num_nodes'].get())
         bandwidth_mbps = float(entries['bandwidth_mbps'].get())
-        total_data_mega_bytes = float(entries['total_data_mega_bytes'].get())
+        total_load_per_sec_Mb = float(entries['total_load_per_sec_Mb'].get())
+        perfect_load_MB = total_load_per_sec_Mb * max_sim_time / 8.0
     except ValueError:
         return
 
     params = {
+        'max_sim_time': max_sim_time,
         'num_nodes': num_nodes,
         'bandwidth_mbps': bandwidth_mbps,
-        'total_data_mega_bytes': total_data_mega_bytes
+        'total_load_per_sec_Mb': total_load_per_sec_Mb
     }
 
-    meter.configure(amounttotal=total_data_mega_bytes, amountused=0, stepsize=total_data_mega_bytes * 0.1)
+    meter.configure(amounttotal=perfect_load_MB, amountused=0, stepsize=total_load_per_sec_Mb * 0.1)
     button.config(state=DISABLED)
 
     t = threading.Thread(target=run_sim_in_thread, args=(params, out_q), daemon=True)
@@ -104,34 +109,62 @@ def poll_queue(root, out_q, button, results_frame, meter):
 def main():
     root = ttkb.Window(themename="vapor")
     root.title("CalBench")
-    root.geometry("600x450")
+
+    
+    sw = root.winfo_screenwidth()
+    sh = root.winfo_screenheight()
+    w = int(sw * 0.22)
+    h = int(sh * 0.3)
+    #w = max(800, min(w, sw))   # minimalna szerokość 800px
+    #h = max(600, min(h, sh))   # minimalna wysokość 600px
+    root.geometry(f"{w}x{h}")
     root.resizable(False, False)
 
+
+    try:
+        dpi = root.winfo_fpixels('1i')    # px per inch
+        scaling = dpi / 76.0
+        root.tk.call('tk', 'scaling', scaling)
+    except Exception:
+        pass
+
+    # użyj grid jako layoutu głównego aby elementy mogły skalować się proporcjonalnie
     frm = ttkb.Frame(root, padding=12)
-    frm.pack(fill=BOTH, expand=YES)
+    frm.grid(sticky='nsew')
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
 
+    # lewy panel (kontrolki) i prawy panel (wyniki + meter)
     left = ttkb.Frame(frm)
-    left.pack(side=LEFT, fill=Y, padx=8, pady=8)
+    left.grid(row=0, column=0, sticky='nsw', padx=8, pady=8)
 
-    # prawy panel na meter i wyniki — rozciąga się, by wyniki były zawsze widoczne
     right = ttkb.Frame(frm)
-    right.pack(side=RIGHT, fill=BOTH, expand=YES, padx=8, pady=8)
+    right.grid(row=0, column=1, sticky='nsew', padx=8, pady=8)
+
+    frm.columnconfigure(1, weight=1)   # prawy panel rośnie wraz z oknem
+    frm.rowconfigure(0, weight=1)
 
     entries = {}
+
+    ttkb.Label(left, text="Czas przesyłu danych [s]").pack(anchor='w', pady=(4,0))
+    entries['max_sim_time'] = ttkb.Entry(left)
+    entries['max_sim_time'].pack(fill=X, pady=4)
+    entries['max_sim_time'].insert(0, "60")
+
     ttkb.Label(left, text="Ilość węzłów").pack(anchor='w', pady=(4,0))
     entries['num_nodes'] = ttkb.Entry(left)
     entries['num_nodes'].pack(fill=X, pady=4)
     entries['num_nodes'].insert(0, "10")
 
-    ttkb.Label(left, text="Przepustowość [Mb/s]").pack(anchor='w', pady=(4,0))
+    ttkb.Label(left, text="Przepustowość sieci [Mb/s]").pack(anchor='w', pady=(4,0))
     entries['bandwidth_mbps'] = ttkb.Entry(left)
     entries['bandwidth_mbps'].pack(fill=X, pady=4)
-    entries['bandwidth_mbps'].insert(0, "50")
+    entries['bandwidth_mbps'].insert(0, "100")
 
-    ttkb.Label(left, text="Ilość wysłanych danych [MB]").pack(anchor='w', pady=(4,0))
-    entries['total_data_mega_bytes'] = ttkb.Entry(left)
-    entries['total_data_mega_bytes'].pack(fill=X, pady=4)
-    entries['total_data_mega_bytes'].insert(0, "150")
+    ttkb.Label(left, text="Obciążenie sieci [Mb/s]").pack(anchor='w', pady=(4,0))
+    entries['total_load_per_sec_Mb'] = ttkb.Entry(left)
+    entries['total_load_per_sec_Mb'].pack(fill=X, pady=4)
+    entries['total_load_per_sec_Mb'].insert(0, "30")
 
     out_q = queue.Queue()
     # ramka wyników umieszczona w prawym panelu — zawsze widoczna i rozciąga się
