@@ -82,9 +82,13 @@ class Medium:
         self.busy_until = 0.0
 
     def is_free(self, current_time):
-        return current_time >= self.busy_until
+        EPS = 1e-12
+        return current_time > self.busy_until - EPS
 
     def start_transmission(self, current_time, frame_size_bytes, node=None):
+
+        if not self.is_free(current_time):
+            raise RuntimeError("Medium occupied – simultaneous transmission detected.")
 
         transmission_time = (frame_size_bytes * 8) / self.bandwidth_bps
 
@@ -577,10 +581,16 @@ class Simulator:
         try_events = [e for e in events if e.type == "try_transmission"]
         start_events = [e for e in events if e.type == "start_transmission"]
 
+
+
+
         # -------------------------------
         # 1. Zakończ transmisje
         # -------------------------------
         for ev in end_events:
+
+            self.logger.debug(f"Węzeł {ev.node.id} kończy nadawać o czasie {ev.time}")
+
             node = ev.node
             pkt = getattr(ev, "frame", None)
             if pkt and pkt in node.queue:
@@ -592,17 +602,34 @@ class Simulator:
             if node.queue:
                 self.events.append(Event(self.time + self.inter_frame_gap, "try_transmission", node))
 
+
+
+
+
         # -------------------------------
         # 2. Generuj nowe ramki
         # -------------------------------
         for ev in gen_events:
+
+            self.logger.debug(f"Węzeł {ev.node.id} generuje ramkę o czasie {ev.time}")
+
             node = ev.node
             if ev.time <= self.max_sim_time:
+
                 node.generate_frame_now(ev.time)
+
                 if len(node.queue) == 1:
+
                     self.events.append(Event(self.time, "try_transmission", node))
+                    
                 next_time = ev.time + random.random() * self.interarrival_det
                 self.events.append(Event(next_time, "generate_frame", node))
+
+
+
+
+
+
 
         # -------------------------------
         # 3. Obsłuż próby transmisji
@@ -615,6 +642,9 @@ class Simulator:
         # Jeśli więcej niż jeden węzeł próbuje naraz -> kolizja
         if len(active_nodes) > 1 and self.medium.is_free(self.time):
             self.stats.record_collision()
+
+            self.logger.debug(f"Kolizja! O czasie {self.time} między węzłami {[node.id for node in active_nodes]}")
+
             for node in active_nodes:
                 if node.queue[0].first_attempt_time is None:
                     node.queue[0].first_attempt_time = self.time
@@ -631,12 +661,17 @@ class Simulator:
             frame.first_attempt_time = self.time
 
         if self.medium.is_free(self.time):
+
+            self.logger.debug(f"Węzeł {node.id} zaczyna nadawać o czasie {self.time}")
+
             duration = self.medium.start_transmission(self.time, frame.size_bytes, node)
             end_ev = Event(self.time + duration, "end_transmission", node)
             end_ev.frame = frame
             self.events.append(end_ev)
         else:
             # medium zajęte, spróbuj ponownie po czasie slotu
+            self.logger.debug(f"Węzeł {node.id} medium zajęte o czasie {self.time}, ponawia próbę.")
+
             self.events.append(Event(self.time + self.slot_time, "try_transmission", node))
 
 
@@ -657,6 +692,10 @@ class Simulator:
 
             ##self.logger.debug(f"Rozmiar eventów w kolejce w while: {len(self.events)}")
 
+            if len(self.medium.active_transmissions) > 1:
+                print(f"[!] Równoległe transmisje o czasie {self.time}: {[n.id for (n,_) in self.medium.active_transmissions]}")
+
+
             self.events.sort(key=lambda e: e.time)
 
             self.time = self.events[0].time
@@ -671,13 +710,18 @@ class Simulator:
 
             self.events = [e for e in self.events if e not in events]
 
-            self.handle_event(events)
+            self.handle_event_2(events)
 
         print("\nSymulacja zakończona.\n")
         self.logger.debug("Symulacja zakończona.")
 
         return self.stats.summary(self.time)
     
+
+    """
+
+    
+    """
 logger = logging.getLogger("calbench")
 logger.setLevel(logging.DEBUG)
 
@@ -687,5 +731,5 @@ fh.setFormatter(logging.Formatter("%(asctime)s   %(message)s"))
 
 logger.addHandler(fh)
 
-cos = Simulator(3,30,100,30, logger)
+cos = Simulator(60, 30, 100, 30, logger)
 cos.run()
