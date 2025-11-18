@@ -58,9 +58,9 @@ class Stats:
         avg_latency = np.mean(self.latencies) if self.latencies else 0
         avg_latancy_ms = avg_latency * 1000
 
-        print(f"\n\nIlość odbranych ramek: {self.frame_count_received}")
-        print(f"Ilość odbranych mega bajtów: {self.total_bytes_received/1e6} MB")
-        print(f"Maksymalna ilosc odebranych mega bajtów {self.perfect_load_bytes/1e6}")
+        # print(f"\n\nIlość odbranych ramek: {self.frame_count_received}")
+        # print(f"Ilość odbranych mega bajtów: {self.total_bytes_received/1e6} MB")
+        # print(f"Maksymalna ilosc odebranych mega bajtów {self.perfect_load_bytes/1e6}")
 
         return {
             "Czas przesyłu danych [s]:": round(total_time_s, 3),
@@ -194,10 +194,10 @@ class Event:
 # -------------------------------
 class Simulator:
 
-    def __init__(self, max_sim_time, num_nodes, bandwidth_mbps, total_load_per_sec, logger):
+    def __init__(self, max_sim_time, num_nodes, bandwidth_mbps, total_load_per_sec):
 
-        print(f"Initializing simulator with {num_nodes} nodes, {bandwidth_mbps} Mb/s bandwidth, "
-              f"{total_load_per_sec} Mb/s total load, max sim time {max_sim_time} s.")
+        # print(f"Initializing simulator with {num_nodes} nodes, {bandwidth_mbps} Mb/s bandwidth, "
+            #   f"{total_load_per_sec} Mb/s total load, max sim time {max_sim_time} s.")
 
         self.max_sim_time = max_sim_time
         self.time = 0
@@ -226,7 +226,7 @@ class Simulator:
         self.debug_help = 0
         self.debug_set = set()
 
-        self.logger = logger
+        # # self.logger = logger
 
 
     def handle_event_2(self, events):
@@ -240,7 +240,7 @@ class Simulator:
         # -------------------------------
         for ev in end_events:
 
-            self.logger.debug(f"Węzeł {ev.node.id} kończy nadawać o czasie {ev.time}")
+            # self.logger.debug(f"Węzeł {ev.node.id} kończy nadawać o czasie {ev.time}")
 
             node = ev.node
             pkt = getattr(ev, "frame", None)
@@ -262,7 +262,7 @@ class Simulator:
         # -------------------------------
         for ev in gen_events:
 
-            self.logger.debug(f"Węzeł {ev.node.id} generuje ramkę o czasie {ev.time}")
+            # self.logger.debug(f"Węzeł {ev.node.id} generuje ramkę o czasie {ev.time}")
 
             node = ev.node
             if ev.time <= self.max_sim_time:
@@ -295,7 +295,7 @@ class Simulator:
         if len(active_nodes) > 1 and self.medium.is_free(self.time):
             self.stats.record_collision()
 
-            self.logger.debug(f"Kolizja! O czasie {self.time} między węzłami {[node.id for node in active_nodes]}")
+            # self.logger.debug(f"Kolizja! O czasie {self.time} między węzłami {[node.id for node in active_nodes]}")
 
             for node in active_nodes:
                 if node.queue[0].first_attempt_time is None:
@@ -325,7 +325,7 @@ class Simulator:
                 if(n.wasDrop == False):
 
                     self.events.append(Event(sense_t, "try_transmission", n))
-                    self.logger.debug(f"Węzeł {n.id} kanał zajęty o {self.time}, planuje ponowne czucie o {sense_t}")
+                    # self.logger.debug(f"Węzeł {n.id} kanał zajęty o {self.time}, planuje ponowne czucie o {sense_t}")
                 else:
 
                     n.wasDrop = False
@@ -345,8 +345,8 @@ class Simulator:
 
     def run(self):
 
-        print("\nRozpoczynanie symulacji...\n")
-        self.logger.debug("Rozpoczynanie symulacji.")
+        # print("\nRozpoczynanie symulacji...\n")
+        # self.logger.debug("Rozpoczynanie symulacji.")
 
         for n in self.nodes:
             if self.frames_per_sec_per_node > 0:
@@ -366,7 +366,7 @@ class Simulator:
             self.events = [e for e in self.events if e not in batch]
             self.handle_event_2(batch)
 
-        self.logger.debug("Symulacja zakończona.")
+        # self.logger.debug("Symulacja zakończona.")
 
         return self.stats.summary(self.time)
     

@@ -9,19 +9,19 @@ import logging
 from logging.handlers import RotatingFileHandler
 import sys
 
-logger = logging.getLogger("calbench")
-logger.setLevel(logging.DEBUG)
+# logger = logging.getLogger("calbench")
+# logger.setLevel(logging.DEBUG)
 
-# plik logów z rotacją (max 5 MB, 3 pliki)
-fh = RotatingFileHandler("calbench.log", maxBytes=32*1024*1024, backupCount=3, encoding="utf-8")
-fh.setLevel(logging.DEBUG)
-fh.setFormatter(logging.Formatter("%(asctime)s   %(message)s"))
+# # plik logów z rotacją (max 5 MB, 3 pliki)
+# fh = RotatingFileHandler("calbench.log", maxBytes=32*1024*1024, backupCount=3, encoding="utf-8")
+# fh.setLevel(logging.DEBUG)
+# fh.setFormatter(logging.Formatter("%(asctime)s   %(message)s"))
 
-logger.addHandler(fh)
+# logger.addHandler(fh)
 
 def run_sim_in_thread(params, out_q):
     try:
-        sim = simul.Simulator(params['max_sim_time'], params['num_nodes'], params['bandwidth_mbps'], params['total_load_per_sec_Mb'], logger)
+        sim = simul.Simulator(params['max_sim_time'], params['num_nodes'], params['bandwidth_mbps'], params['total_load_per_sec_Mb'])
         stop_flag = threading.Event()
 
         def progress_poller():
