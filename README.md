@@ -43,7 +43,7 @@ Rdzeń aplikacji to **symulator zdarzeniowy**, który modeluje procesy zachodzą
   - `Stats`: Obiekt zbierający statystyki w trakcie trwania symulacji (np. zlicza kolizje, odebrane bajty, opóźnienia), które są następnie prezentowane jako wynik końcowy.
   - `Event`: Reprezentuje pojedyncze zdarzenie w symulacji (np. "wygeneruj nową ramkę", "zakończ transmisję", "spróbuj wysłać dane"), które ma przypisany dokładny czas wystąpienia.
 
-## 3. Przebieg Symulacji
+## 2. Przebieg Symulacji
 
 1.  Po uruchomieniu, na podstawie parametrów wejściowych, tworzone są początkowe zdarzenia generowania ramek dla każdego z węzłów.
 2.  Główna pętla symulatora pobiera z kolejki zdarzenie o najwcześniejszym czasie wystąpienia.
