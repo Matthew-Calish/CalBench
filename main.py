@@ -113,7 +113,7 @@ def main():
     
     sw = root.winfo_screenwidth()
     sh = root.winfo_screenheight()
-    w = int(sw * 0.22)
+    w = int(sw * 0.25)
     h = int(sh * 0.3)
     #w = max(800, min(w, sw))   # minimalna szerokość 800px
     #h = max(600, min(h, sh))   # minimalna wysokość 600px
@@ -154,7 +154,7 @@ def main():
     ttkb.Label(left, text="Ilość węzłów").pack(anchor='w', pady=(4,0))
     entries['num_nodes'] = ttkb.Entry(left)
     entries['num_nodes'].pack(fill=X, pady=4)
-    entries['num_nodes'].insert(0, "10")
+    entries['num_nodes'].insert(0, "50")
 
     ttkb.Label(left, text="Przepustowość sieci [Mb/s]").pack(anchor='w', pady=(4,0))
     entries['bandwidth_mbps'] = ttkb.Entry(left)
@@ -167,24 +167,23 @@ def main():
     entries['total_load_per_sec_Mb'].insert(0, "30")
 
     out_q = queue.Queue()
-    # ramka wyników umieszczona w prawym panelu — zawsze widoczna i rozciąga się
+
     results_frame = ttkb.Frame(right)
     results_frame.pack(side=TOP, fill=BOTH, expand=YES, padx=18, pady=8)
 
-    # tytuł/placeholder wyników (zostanie nadpisany po zakończeniu symulacji)
     ttkb.Label(results_frame, text="Czas przesyłu danych [s]:").grid(row=0, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=0, column=1, sticky='w', padx=6, pady=2)
 
-    ttkb.Label(results_frame, text="Przepustowość [Mb/s]:").grid(row=1, column=0, sticky='w', padx=6, pady=2)
+    ttkb.Label(results_frame, text="Realna przepustowość [Mb/s]:").grid(row=1, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=1, column=1, sticky='w', padx=6, pady=2)
 
-    ttkb.Label(results_frame, text="Średnie opuźnienia [ms]:").grid(row=2, column=0, sticky='w', padx=6, pady=2)
+    ttkb.Label(results_frame, text="Procent przesłanych danych [%]:").grid(row=2, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=2, column=1, sticky='w', padx=6, pady=2)
 
-    ttkb.Label(results_frame, text="Kolizje:").grid(row=3, column=0, sticky='w', padx=6, pady=2)
+    ttkb.Label(results_frame, text="Liczba kolizji:").grid(row=3, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=3, column=1, sticky='w', padx=6, pady=2)
 
-    ttkb.Label(results_frame, text="Porzucone ramki:").grid(row=4, column=0, sticky='w', padx=6, pady=2)
+    ttkb.Label(results_frame, text="Liczba porzuconych ramek:").grid(row=4, column=0, sticky='w', padx=6, pady=2)
     ttkb.Label(results_frame, text="Brak", bootstyle="secondary").grid(row=4, column=1, sticky='w', padx=6, pady=2)
 
 
